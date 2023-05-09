@@ -354,7 +354,7 @@ func (s *UDPSession) Close() error {
 		s.mu.Unlock()
 
 		if s.l != nil { // belongs to listener
-			s.l.closeSession(s.remote)
+			s.l.closeSession(s.kcp.conv)
 			return nil
 		} else if s.ownConn { // client socket close
 			return s.conn.Close()
@@ -760,7 +760,7 @@ type (
 		conn         net.PacketConn // the underlying packet connection
 		ownConn      bool           // true if we created conn internally, false if provided by caller
 
-		sessions        map[string]*UDPSession // all sessions accepted by this Listener
+		sessions        map[uint32]*UDPSession // all sessions accepted by this Listener
 		sessionLock     sync.RWMutex
 		chAccepts       chan *UDPSession // Listen() backlog
 		chSessionClosed chan net.Addr    // session close queue
@@ -795,9 +795,6 @@ func (l *Listener) packetInput(data []byte, addr net.Addr) {
 	}
 
 	if decrypted && len(data) >= IKCP_OVERHEAD {
-		l.sessionLock.RLock()
-		s, ok := l.sessions[addr.String()]
-		l.sessionLock.RUnlock()
 
 		var conv, sn uint32
 		convRecovered := false
@@ -815,7 +812,9 @@ func (l *Listener) packetInput(data []byte, addr net.Addr) {
 			sn = binary.LittleEndian.Uint32(data[IKCP_SN_OFFSET:])
 			convRecovered = true
 		}
-
+		l.sessionLock.RLock()
+		s, ok := l.sessions[conv]
+		l.sessionLock.RUnlock()
 		if ok { // existing connection
 			if !convRecovered || conv == s.kcp.conv { // parity data or valid conversation
 				s.kcpInput(data)
@@ -830,7 +829,7 @@ func (l *Listener) packetInput(data []byte, addr net.Addr) {
 				s := newUDPSession(conv, l.dataShards, l.parityShards, l, l.conn, false, addr, l.block)
 				s.kcpInput(data)
 				l.sessionLock.Lock()
-				l.sessions[addr.String()] = s
+				l.sessions[conv] = s
 				l.sessionLock.Unlock()
 				l.chAccepts <- s
 			}
@@ -953,12 +952,12 @@ func (l *Listener) Close() error {
 	return err
 }
 
-// closeSession notify the listener that a session has closed
-func (l *Listener) closeSession(remote net.Addr) (ret bool) {
+// closeSession notify the listener that a session has closed  conv:kcpId
+func (l *Listener) closeSession(conv uint32) (ret bool) {
 	l.sessionLock.Lock()
 	defer l.sessionLock.Unlock()
-	if _, ok := l.sessions[remote.String()]; ok {
-		delete(l.sessions, remote.String())
+	if _, ok := l.sessions[conv]; ok {
+		delete(l.sessions, conv)
 		return true
 	}
 	return false
@@ -999,7 +998,7 @@ func serveConn(block BlockCrypt, dataShards, parityShards int, conn net.PacketCo
 	l := new(Listener)
 	l.conn = conn
 	l.ownConn = ownConn
-	l.sessions = make(map[string]*UDPSession)
+	l.sessions = make(map[uint32]*UDPSession)
 	l.chAccepts = make(chan *UDPSession, acceptBacklog)
 	l.chSessionClosed = make(chan net.Addr)
 	l.die = make(chan struct{})
