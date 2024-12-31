@@ -5,7 +5,7 @@ const maxAutoTuneSamples = 258
 // pulse represents a 0/1 signal with time sequence
 type pulse struct {
 	bit bool   // 0 or 1
-	seq uint32 // sequence of the signal
+	seq uint32 // sequence of the sign  al
 }
 
 // autoTune object
