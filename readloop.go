@@ -30,9 +30,6 @@ func (l *Listener) defaultMonitor() {
 	buf := make([]byte, mtuLimit)
 	for {
 		if n, from, err := l.conn.ReadFrom(buf); err == nil {
-			if PluginPing(l.conn, buf, n, from) {
-				continue
-			}
 			l.packetInput(buf[:n], from)
 		} else {
 			l.notifyReadError(errors.WithStack(err))
