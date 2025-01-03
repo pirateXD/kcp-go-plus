@@ -10,7 +10,6 @@ package kcp
 import (
 	"crypto/rand"
 	"encoding/binary"
-	"fmt"
 	"hash/crc32"
 	"io"
 	"net"
@@ -776,7 +775,7 @@ type (
 
 		rd atomic.Value // read deadline for Accept()
 
-		pluginList []func(conn net.PacketConn, data []byte, addr net.Addr) bool
+		pluginList []PluginFunc
 	}
 )
 
@@ -985,8 +984,8 @@ func (l *Listener) closeSession(conv uint32) (ret bool) {
 func (l *Listener) Addr() net.Addr { return l.conn.LocalAddr() }
 
 // Listen listens for incoming KCP packets addressed to the local address laddr on the network "udp",
-func Listen(laddr string, pluginType ...PLUGIN_TYPE) (net.Listener, error) {
-	return ListenWithOptions(laddr, nil, 0, 0, pluginType...)
+func Listen(laddr string, pluginFunc ...PluginFunc) (net.Listener, error) {
+	return ListenWithOptions(laddr, nil, 0, 0, pluginFunc...)
 }
 
 // ListenWithOptions listens for incoming KCP packets addressed to the local address laddr on the network "udp" with packet encryption.
@@ -996,7 +995,7 @@ func Listen(laddr string, pluginType ...PLUGIN_TYPE) (net.Listener, error) {
 // 'dataShards', 'parityShards' specify how many parity packets will be generated following the data packets.
 //
 // Check https://github.com/klauspost/reedsolomon for details
-func ListenWithOptions(laddr string, block BlockCrypt, dataShards, parityShards int, pluginType ...PLUGIN_TYPE) (*Listener, error) {
+func ListenWithOptions(laddr string, block BlockCrypt, dataShards, parityShards int, pluginFunc ...PluginFunc) (*Listener, error) {
 	udpaddr, err := net.ResolveUDPAddr("udp", laddr)
 	if err != nil {
 		return nil, errors.WithStack(err)
@@ -1006,15 +1005,15 @@ func ListenWithOptions(laddr string, block BlockCrypt, dataShards, parityShards 
 		return nil, errors.WithStack(err)
 	}
 
-	return serveConn(block, dataShards, parityShards, conn, true, pluginType...)
+	return serveConn(block, dataShards, parityShards, conn, true, pluginFunc...)
 }
 
 // ServeConn serves KCP protocol for a single packet connection.
-func ServeConn(block BlockCrypt, dataShards, parityShards int, conn net.PacketConn, pluginType ...PLUGIN_TYPE) (*Listener, error) {
-	return serveConn(block, dataShards, parityShards, conn, false, pluginType...)
+func ServeConn(block BlockCrypt, dataShards, parityShards int, conn net.PacketConn, pluginFunc ...PluginFunc) (*Listener, error) {
+	return serveConn(block, dataShards, parityShards, conn, false, pluginFunc...)
 }
 
-func serveConn(block BlockCrypt, dataShards, parityShards int, conn net.PacketConn, ownConn bool, pluginType ...PLUGIN_TYPE) (*Listener, error) {
+func serveConn(block BlockCrypt, dataShards, parityShards int, conn net.PacketConn, ownConn bool, pluginFunc ...PluginFunc) (*Listener, error) {
 	l := new(Listener)
 	l.conn = conn
 	l.ownConn = ownConn
@@ -1026,12 +1025,9 @@ func serveConn(block BlockCrypt, dataShards, parityShards int, conn net.PacketCo
 	l.parityShards = parityShards
 	l.block = block
 	l.chSocketReadError = make(chan struct{})
-	for _, typeIt := range pluginType {
-		pluginFunc, exists := PluginMgr[typeIt]
-		if !exists {
-			panic(fmt.Sprintf("plugin type [%v] not found", typeIt))
-		}
-		l.pluginList = append(l.pluginList, pluginFunc)
+	l.pluginList = make([]PluginFunc, 0)
+	if len(pluginFunc) > 0 {
+		l.pluginList = append(l.pluginList, pluginFunc...)
 	}
 	go l.monitor()
 	return l, nil

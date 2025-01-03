@@ -22,10 +22,26 @@ func TestPingCoreFailed(t *testing.T) {
 		udpPint(addr, t)
 	}
 }
+
+func PluginPing(conn net.PacketConn, buf []byte, addr net.Addr) (holdUp bool) {
+	const pingLen = 8
+	const reqKey = "ping"
+	const ackKey = "pong"
+	if len(buf) != pingLen {
+		return false
+	}
+
+	if buf[0] == reqKey[0] && buf[1] == reqKey[1] && buf[2] == reqKey[2] && buf[3] == reqKey[3] {
+		buf[1] = ackKey[1]
+		_, _ = conn.WriteTo(buf, addr)
+		return true
+	}
+	return false
+}
 func TestPingCoreSuccess(t *testing.T) {
 	{
 		addr := "127.0.0.1:456"
-		_, _ = ListenWithOptions(addr, nil, 0, 0, PLUGIN_PING)
+		_, _ = ListenWithOptions(addr, nil, 0, 0, PluginPing)
 		udpPint(addr, t)
 	}
 }
